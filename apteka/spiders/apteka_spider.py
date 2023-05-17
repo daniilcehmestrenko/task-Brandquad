@@ -1,9 +1,11 @@
 import uuid
+import requests
 import scrapy
 from scrapy import Selector
 from scrapy.responsetypes import Response
-from datetime import datetime
 
+from datetime import datetime
+from bs4 import BeautifulSoup
 
 class AptekaSpiderSpider(scrapy.Spider):
     name = "apteka_spider"
@@ -23,7 +25,7 @@ class AptekaSpiderSpider(scrapy.Spider):
         sections = response.css('.ui-breadcrumbs__list span::text').extract()
         for item in items:
             timestamp = datetime.timestamp(datetime.now())
-            rpc = int(uuid.uuid4())
+            rpc = int(uuid.uuid4()) # rpc сгенерировал сам
             title = item.css('.goods-card__link span::text').get()
             item_path = item.css('.goods-card__link::attr(href)').get()
             url = 'https://' + self.allowed_domains[-1] + item_path
@@ -34,12 +36,8 @@ class AptekaSpiderSpider(scrapy.Spider):
             price_data = self.__get_item_price_data(item)
             stock = {'in_stock': bool(price_data['original']), 'count': 0}
             assets = self.__get_assets_data(item)
-            # не смог придумать как перейти поссылке и спрасить из нее
-            # попробовал методами scrapy, но не хватает опыта работы с библой
-            # и не стал придумывать велосипед через requests и bs4
-            # поэтому поставил None в metadata и variants
-            metadata = None
-            variants = None
+            metadata = self.__get_metadata(url)
+            variants = 1 # не нашел на странице по этому дефолтное значение
             yield {
                 "timestamp": timestamp,
                 "RPC": rpc,
@@ -87,7 +85,7 @@ class AptekaSpiderSpider(scrapy.Spider):
             original_price = float(original_price_str.strip().split()[0]) \
                                 if original_price_str else 0
             current_price = original_price
-        
+
         return {
             "current": current_price,
             "original": original_price,
@@ -108,11 +106,15 @@ class AptekaSpiderSpider(scrapy.Spider):
             "video": video
         }
 
-    def parse_metadata(self, response: Response):
-        description = response.css('.custom-html.content-text::text').get()
-        country = response.css('.page-header__description span::text').get()
+    def __get_metadata(self, url: str) -> dict:
+        response = requests.get(url)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        description_tag = soup.find(class_='custom-html content-text')
+        description = ' '.join(description_tag.stripped_strings) \
+                        if description_tag else ''
+        location = soup.find('span', attrs={'itemtype': 'location'})
 
-        yield {
-            '__description': description or '',
-            'СТРАНА ПРОИЗВОДИТЕЛЬ': country or ''
+        return {
+            "__description": description,
+            "СТРАНА ПРОИЗВОДИТЕЛЬ": location.text if location else None
         }
